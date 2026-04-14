@@ -45,6 +45,9 @@ $router->get('/applications/{slug}/download/{file}', 'ApplicationController', 'd
 $router->get('/submit',  'SubmitController', 'form');
 $router->post('/submit', 'SubmitController', 'store');
 
+// Trigger processing from web (no CLI needed)
+$router->post('/process', 'SubmitController', 'process');
+
 // Settings
 $router->get('/settings',  'SettingsController', 'index');
 $router->post('/settings', 'SettingsController', 'update');

@@ -47,7 +47,26 @@ class SubmitController extends Controller {
             file_put_contents($txtFile, $header . $text);
         }
 
-        $this->flash('success', "Job submitted! " . ($url ? "URL saved." : "Text saved.") . " Run process_jobs.php to generate materials.");
+        $this->flash('success', "Job submitted! " . ($url ? "URL saved." : "Text saved.") . " Hit 'Process Now' or wait for nightly.");
+        $this->redirect('/submit');
+    }
+
+    /**
+     * Trigger process_jobs.php from the web UI.
+     * Runs the CLI script in the background and redirects back.
+     */
+    public function process(): void {
+        $this->requireAuth();
+        $script = BASE_PATH . '/scripts/process_jobs.php';
+        $logFile = BASE_PATH . '/storage/logs/process_' . date('Ymd_His') . '.log';
+
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            pclose(popen("start /B php \"$script\" > \"$logFile\" 2>&1", 'r'));
+        } else {
+            exec("php $script > $logFile 2>&1 &");
+        }
+
+        $this->flash('info', 'Processor started in background. Check your email for the report, or refresh /applications in a minute.');
         $this->redirect('/submit');
     }
 }

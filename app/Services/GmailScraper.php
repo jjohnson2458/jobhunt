@@ -46,6 +46,9 @@ class GmailScraper implements JobScraper
             throw new RuntimeException('IMAP connect failed: ' . imap_last_error());
         }
 
+        // First: check for self-shared job postings (subject starts with "jobhunt:")
+        $this->processSharedEmails($imap);
+
         $parsers = [
             new IndeedAlertParser(),
             new ZipRecruiterAlertParser(),
@@ -108,6 +111,47 @@ class GmailScraper implements JobScraper
             if ($found) return $found;
         }
         return '';
+    }
+
+    /**
+     * Process emails where user shared a job posting to themselves.
+     * Subject must start with "jobhunt:" — the rest is the job title.
+     * Body can be a URL, pasted text, or both.
+     */
+    private function processSharedEmails($imap): void
+    {
+        $uids = imap_search($imap, 'UNSEEN SUBJECT "jobhunt:"', SE_UID) ?: [];
+        if (!$uids) return;
+
+        foreach ($uids as $uid) {
+            $msgno  = imap_msgno($imap, $uid);
+            $headers = imap_headerinfo($imap, $msgno);
+            $subject = $headers->subject ?? '';
+            $title   = trim(preg_replace('/^jobhunt:\s*/i', '', $subject));
+            $body    = $this->fetchBody($imap, $uid);
+            $text    = strip_tags(str_replace(['<br>', '<br/>', '</p>', '</div>'], "\n", $body));
+            $text    = html_entity_decode(trim($text), ENT_QUOTES, 'UTF-8');
+
+            // Extract URL if present
+            $url = '';
+            if (preg_match('#(https?://\S+indeed\.com\S*|https?://\S+ziprecruiter\S*|https?://\S+linkedin\S*|https?://\S+monster\S*)#i', $text, $m)) {
+                $url = $m[1];
+            }
+
+            $stamp = date('Ymd_His');
+            $slug  = $title ? preg_replace('/[^a-z0-9]+/i', '-', strtolower(substr($title, 0, 60))) : $stamp;
+
+            // Save as submitted text file for process_jobs.php
+            $txtFile = BASE_PATH . "/jobs/submitted_{$slug}_{$stamp}.txt";
+            $header  = "Title: $title\n";
+            if ($url) $header .= "URL: $url\n";
+            $header .= "Submitted: " . date('Y-m-d H:i:s') . " (via email)\n";
+            $header .= str_repeat('-', 60) . "\n\n";
+            file_put_contents($txtFile, $header . $text);
+
+            imap_setflag_full($imap, (string)$uid, '\\Seen', ST_UID);
+            error_log("[GmailScraper] Shared job saved: $title → $txtFile");
+        }
     }
 
     private function decodePart(string $data, int $encoding): string
