@@ -6,8 +6,8 @@
 class SubmitController extends Controller {
     public function form(): void {
         $this->requireAuth();
-        $pending = glob(BASE_PATH . '/jobs/pending_*.json');
-        $this->view('submit/form', ['pending' => count($pending)]);
+        $pending = count(glob(BASE_PATH . '/jobs/pending_*.json')) + count(glob(BASE_PATH . '/jobs/submitted_*.txt'));
+        $this->view('submit/form', ['pending' => $pending]);
     }
 
     public function store(): void {

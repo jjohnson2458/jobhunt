@@ -25,14 +25,12 @@
     </form>
   </div>
 
-  <?php if ($pending): ?>
   <div class="card p-3 mt-3">
     <form method="post" action="<?= BASE_URL ?>/process">
       <input type="hidden" name="csrf_token" value="<?= Csrf::token() ?>">
-      <button class="btn btn-success w-100">Process Now (<?= $pending ?> pending)</button>
+      <button class="btn btn-success w-100">Process Now<?= $pending ? " ($pending pending)" : '' ?></button>
     </form>
   </div>
-  <?php endif; ?>
 
   <div class="card p-3 mt-3">
     <h5>Share from Phone</h5>
