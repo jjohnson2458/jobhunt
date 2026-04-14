@@ -120,14 +120,25 @@ class GmailScraper implements JobScraper
      */
     private function processSharedEmails($imap): void
     {
-        $uids = imap_search($imap, 'UNSEEN SUBJECT "jobhunt:"', SE_UID) ?: [];
+        // Match "jobhunt:" prefix OR emails from yourself to yourself (self-shares)
+        $uids1 = imap_search($imap, 'UNSEEN SUBJECT "jobhunt:"', SE_UID) ?: [];
+        $cfg = require BASE_PATH . '/config/app.php';
+        $myEmail = $cfg['gmail_address'] ?? '';
+        $uids2 = $myEmail ? (imap_search($imap, "UNSEEN FROM \"$myEmail\" TO \"$myEmail\"", SE_UID) ?: []) : [];
+        // Merge and dedupe, exclude known notification subjects
+        $uids = array_unique(array_merge($uids1, $uids2));
         if (!$uids) return;
 
         foreach ($uids as $uid) {
             $msgno  = imap_msgno($imap, $uid);
             $headers = imap_headerinfo($imap, $msgno);
             $subject = $headers->subject ?? '';
-            $title   = trim(preg_replace('/^jobhunt:\s*/i', '', $subject));
+            // Skip our own notification emails
+            if (preg_match('/^(Jobhunt:|Nightly|claude_jobhunt)/i', $subject)
+                && str_contains($headers->fromaddress ?? '', 'Claude Code')) {
+                continue;
+            }
+            $title = trim(preg_replace('/^jobhunt:\s*/i', '', $subject));
             $body    = $this->fetchBody($imap, $uid);
             $text    = strip_tags(str_replace(['<br>', '<br/>', '</p>', '</div>'], "\n", $body));
             $text    = html_entity_decode(trim($text), ENT_QUOTES, 'UTF-8');
