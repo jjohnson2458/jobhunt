@@ -1,0 +1,7 @@
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+
+# Hidden site — header is also set in PHP, this is belt + suspenders
+Header always set X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
