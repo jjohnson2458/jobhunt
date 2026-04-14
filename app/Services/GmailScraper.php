@@ -120,13 +120,8 @@ class GmailScraper implements JobScraper
      */
     private function processSharedEmails($imap): void
     {
-        // Match "jobhunt:" prefix OR emails from yourself to yourself (self-shares)
-        $uids1 = imap_search($imap, 'UNSEEN SUBJECT "jobhunt:"', SE_UID) ?: [];
-        $cfg = require BASE_PATH . '/config/app.php';
-        $myEmail = $cfg['gmail_address'] ?? '';
-        $uids2 = $myEmail ? (imap_search($imap, "UNSEEN FROM \"$myEmail\" TO \"$myEmail\"", SE_UID) ?: []) : [];
-        // Merge and dedupe, exclude known notification subjects
-        $uids = array_unique(array_merge($uids1, $uids2));
+        // Match "jobhunt" anywhere in subject (covers "jobhunt:", "job hunt", "jobhunt indeed", etc.)
+        $uids = imap_search($imap, 'UNSEEN SUBJECT "jobhunt"', SE_UID) ?: [];
         if (!$uids) return;
 
         foreach ($uids as $uid) {
