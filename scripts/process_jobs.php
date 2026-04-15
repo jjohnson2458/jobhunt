@@ -49,14 +49,26 @@ foreach (glob("$jobsDir/pending_*.json") as $pf) {
     $entry = json_decode(file_get_contents($pf), true);
     if (!$entry || !empty($entry['processed'])) continue;
 
-    // If it has pasted text, a .txt file was already created by SubmitController
-    // If it only has a URL, save it for manual processing later
-    if (!empty($entry['text'])) {
-        echo "[submit] Processing pasted submission: " . ($entry['title'] ?: basename($pf)) . "\n";
-    } elseif (!empty($entry['url'])) {
-        echo "[submit] URL-only submission: {$entry['url']} — save the page to Downloads for full processing.\n";
+    // If URL-only, try to fetch and parse it
+    if (!empty($entry['url']) && empty($entry['text'])) {
+        echo "[submit] Fetching URL: {$entry['url']}\n";
+        $fetcher = new UrlFetcher();
+        $fetched = $fetcher->fetch($entry['url']);
+        if ($fetched) {
+            echo "[submit] Fetched: {$fetched['title']} at {$fetched['company']}\n";
+            // Save as .txt for the main pipeline to pick up
+            $title = $entry['title'] ?: $fetched['title'];
+            $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower(substr($title, 0, 60)));
+            $stamp = date('Ymd_His');
+            $txtFile = "$jobsDir/submitted_{$slug}_{$stamp}.txt";
+            $header = "Title: {$fetched['title']}\nCompany: {$fetched['company']}\nLocation: {$fetched['location']}\nSalary: " . ($fetched['salary_text'] ?? 'n/a') . "\nURL: {$entry['url']}\nSource: {$fetched['source']}\nSubmitted: " . date('Y-m-d H:i:s') . " (fetched from URL)\n" . str_repeat('-', 60) . "\n\n" . ($fetched['apply_info'] ? $fetched['apply_info'] . "\n\n" : '') . $fetched['description'];
+            file_put_contents($txtFile, $header);
+        } else {
+            echo "[submit] Could not fetch URL (Cloudflare?) — save page to Downloads instead.\n";
+        }
+    } elseif (!empty($entry['text'])) {
+        echo "[submit] Pasted submission: " . ($entry['title'] ?: basename($pf)) . "\n";
     }
-    // Mark as acknowledged
     $entry['processed'] = true;
     file_put_contents($pf, json_encode($entry, JSON_PRETTY_PRINT));
 }
@@ -84,19 +96,22 @@ foreach (glob("$jobsDir/submitted_*.txt") as $file) {
     $raw = file_get_contents($file);
 
     // Parse header lines
-    $title = ''; $url = '';
-    if (preg_match('/^Title:\s*(.+)/mi', $raw, $m)) $title = trim($m[1]);
-    if (preg_match('/^URL:\s*(.+)/mi', $raw, $m))   $url   = trim($m[1]);
+    $title = ''; $url = ''; $company = ''; $location = ''; $salaryText = '';
+    if (preg_match('/^Title:\s*(.+)/mi', $raw, $m))    $title    = trim($m[1]);
+    if (preg_match('/^URL:\s*(.+)/mi', $raw, $m))      $url      = trim($m[1]);
+    if (preg_match('/^Company:\s*(.+)/mi', $raw, $m))   $company  = trim($m[1]);
+    if (preg_match('/^Location:\s*(.+)/mi', $raw, $m))  $location = trim($m[1]);
+    if (preg_match('/^Salary:\s*(.+)/mi', $raw, $m))    $salaryText = trim($m[1]);
 
     // Everything after the dashes is the description
     $parts = preg_split('/^-{10,}$/m', $raw, 2);
     $description = trim($parts[1] ?? $raw);
 
-    // Extract company/location/salary from text heuristics
-    $company = ''; $location = ''; $salaryText = '';
-    if (preg_match('/(?:company|employer|at)\s*[:]\s*(.+)/i', $description, $m)) $company = trim($m[1]);
-    if (preg_match('/(?:location|city)\s*[:]\s*(.+)/i', $description, $m)) $location = trim($m[1]);
-    if (preg_match('/\$[\d,]+(?:\.\d+)?(?:\s*[-–]\s*\$?[\d,]+(?:\.\d+)?)?(?:\s*(?:per|a|\/)\s*(?:hour|year|yr|hr))?/i', $description, $m)) $salaryText = $m[0];
+    // Fallback heuristics if header fields were empty
+    if (!$company && preg_match('/(?:company|employer|at)\s*[:]\s*(.+)/i', $description, $m)) $company = trim($m[1]);
+    if (!$location && preg_match('/(?:location|city)\s*[:]\s*(.+)/i', $description, $m)) $location = trim($m[1]);
+    if ((!$salaryText || $salaryText === 'n/a') && preg_match('/\$[\d,]+(?:\.\d+)?(?:\s*[-–]\s*\$?[\d,]+(?:\.\d+)?)?(?:\s*(?:per|a|\/)\s*(?:hour|year|yr|hr))?/i', $description, $m)) $salaryText = $m[0];
+    if ($salaryText === 'n/a') $salaryText = '';
 
     $data = [
         'source'      => $url ? 'indeed' : 'manual',
