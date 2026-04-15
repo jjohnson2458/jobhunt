@@ -25,6 +25,7 @@ Env::load(BASE_PATH);
 // JobScraper.php defines the interface + Playwright scraper classes
 require_once BASE_PATH . '/app/Services/JobScraper.php';
 require_once BASE_PATH . '/app/Services/GmailScraper.php';
+require_once BASE_PATH . '/app/Services/AdditionalScrapers.php';
 
 $opts = getopt('', ['track::', 'source::']);
 $trackFilter  = isset($opts['track'])  ? (int)$opts['track']  : null;
@@ -37,8 +38,11 @@ $scorer    = new ListingScorer();
 $runs      = new ScraperRun();
 
 $allScrapers = [
-    new GmailScraper(),       // primary: ingest job alert emails
-    // Playwright scrapers kept as fallback for ad-hoc/manual use:
+    new GmailScraper(),          // primary: ingest job alert emails
+    new WeWorkRemotelyScraper(), // weworkremotely.com RSS — works great
+    // new DiceScraper(),        // Dice API returns empty — deprecated?
+    // new CraigslistScraper(), // Craigslist 403s server-side requests
+    // Playwright scrapers kept as fallback (Cloudflare-blocked):
     // new IndeedScraper(),
     // new ZipRecruiterScraper(),
     // new MonsterScraper(),
