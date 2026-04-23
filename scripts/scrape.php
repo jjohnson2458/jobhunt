@@ -40,6 +40,7 @@ $runs      = new ScraperRun();
 $allScrapers = [
     new GmailScraper(),          // primary: ingest job alert emails
     new WeWorkRemotelyScraper(), // weworkremotely.com RSS — works great
+    new UpworkScraper(),         // Upwork saved HTML files from public/uploads/
     // new DiceScraper(),        // Dice API returns empty — deprecated?
     // new CraigslistScraper(), // Craigslist 403s server-side requests
     // Playwright scrapers kept as fallback (Cloudflare-blocked):

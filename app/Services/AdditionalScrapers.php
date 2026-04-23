@@ -529,3 +529,203 @@ class CraigslistScraper implements JobScraper
         return $listings;
     }
 }
+
+
+// ─────────────────────────────────────────────────────────────────────
+//  4. Upwork — HTML file parser (saved search pages)
+// ─────────────────────────────────────────────────────────────────────
+
+class UpworkScraper implements JobScraper
+{
+    use FeedScraperHelpers;
+
+    public function source(): string { return 'upwork'; }
+
+    /**
+     * Parse saved Upwork HTML files from public/uploads/.
+     * User saves search results via Ctrl+S → "Webpage, Complete" and
+     * drops the .html file into public/uploads/.
+     */
+    public function fetch(array $track): array
+    {
+        $uploadDir = BASE_PATH . '/public/uploads';
+        $files = glob($uploadDir . '/Upwork*.html');
+        if (!$files) {
+            $files = glob($uploadDir . '/upwork*.html');
+        }
+        if (!$files) return [];
+
+        $keywords = strtolower($track['role_keywords'] ?? '');
+        $keywordList = array_filter(array_map('trim', preg_split('/[,;|]+/', $keywords)));
+
+        $allListings = [];
+
+        foreach ($files as $file) {
+            $listings = $this->parseFile($file, $track, $keywordList);
+            $allListings = array_merge($allListings, $listings);
+        }
+
+        return $allListings;
+    }
+
+    private function parseFile(string $file, array $track, array $keywordList): array
+    {
+        $html = file_get_contents($file);
+        if (!$html) return [];
+
+        $dom = new \DOMDocument();
+        @$dom->loadHTML($html, LIBXML_NOERROR);
+        $xpath = new \DOMXPath($dom);
+
+        $sections = $xpath->query('//*[@data-test="job-tile-list"]/section');
+        if (!$sections->length) return [];
+
+        $listings = [];
+
+        for ($i = 0; $i < $sections->length; $i++) {
+            $section = $sections->item($i);
+
+            // Title + URL from h3.job-tile-title > a
+            $titleA = $xpath->query('.//h3[contains(@class,"job-tile-title")]//a', $section);
+            if (!$titleA->length) continue;
+            $title = trim($titleA->item(0)->textContent);
+            $url   = $titleA->item(0)->getAttribute('href');
+
+            if ($url && !str_starts_with($url, 'http')) {
+                $url = 'https://www.upwork.com' . $url;
+            }
+
+            $sourceId = '';
+            if (preg_match('/~(\d+)/', $url, $m)) {
+                $sourceId = $m[1];
+            }
+
+            // Description from p.mb-0
+            $descEl = $xpath->query('.//p[contains(@class,"mb-0")]', $section);
+            $description = '';
+            for ($d = 0; $d < $descEl->length; $d++) {
+                $text = trim($descEl->item($d)->textContent);
+                if (str_contains($text, 'paid to post')) continue;
+                if (strlen($text) > strlen($description)) {
+                    $description = $text;
+                }
+            }
+            if (!$description) {
+                $descEl2 = $xpath->query('.//*[contains(@class,"text-body-sm")]', $section);
+                for ($d = 0; $d < $descEl2->length; $d++) {
+                    $text = trim($descEl2->item($d)->textContent);
+                    if (strlen($text) > strlen($description)) {
+                        $description = $text;
+                    }
+                }
+            }
+            if (strlen($description) > 1000) {
+                $description = substr($description, 0, 1000);
+            }
+
+            // Rate/budget from small elements
+            $salaryText = null;
+            $salaryMin  = null;
+            $salaryMax  = null;
+            $smalls = $xpath->query('.//small', $section);
+            for ($s = 0; $s < $smalls->length; $s++) {
+                $text = trim($smalls->item($s)->textContent);
+                if (preg_match('/^(Hourly|Fixed)[:\s]*\$[\d,\.]+/i', $text)) {
+                    if (preg_match('/((?:Hourly|Fixed)[:\s]*\$[\d,\.]+(?:\s*[-–—]\s*\$[\d,\.]+)?)/i', $text, $rm)) {
+                        $salaryText = trim($rm[1]);
+                    }
+                    [$salaryMin, $salaryMax] = $this->extractSalary($text);
+                    break;
+                }
+            }
+
+            // Client location
+            $location = 'Remote';
+            for ($s = 0; $s < $smalls->length; $s++) {
+                $text = trim($smalls->item($s)->textContent);
+                if (preg_match('/^\s*(United States|Canada|United Kingdom|Australia|Germany|India|Remote)/i', $text)) {
+                    $location = trim($text);
+                    break;
+                }
+            }
+
+            // Posted time
+            $postedEl = $xpath->query('.//*[@data-test="posted-on"]', $section);
+            $postedText = $postedEl->length ? trim($postedEl->item(0)->textContent) : '';
+            $postedAt = $this->parseRelativeDate($postedText);
+
+            // Skills
+            $skills = [];
+            $skillEls = $xpath->query('.//a[contains(@class,"air3-token")]', $section);
+            for ($s = 0; $s < $skillEls->length; $s++) {
+                $sk = trim($skillEls->item($s)->textContent);
+                if ($sk) $skills[] = $sk;
+            }
+            if ($skills) {
+                $description .= ' | Skills: ' . implode(', ', $skills);
+            }
+
+            // Keyword filtering
+            if ($keywordList) {
+                $haystack = strtolower($title . ' ' . $description);
+                $match = false;
+                foreach ($keywordList as $kw) {
+                    if (str_contains($haystack, $kw)) { $match = true; break; }
+                }
+                if (!$match) continue;
+            }
+
+            if ($this->shouldExclude($title, $description, $track)) continue;
+
+            $listings[] = $this->listing([
+                'source_url'  => $url,
+                'source_id'   => $sourceId,
+                'title'       => $title,
+                'company'     => 'Upwork Client',
+                'location'    => $location,
+                'is_remote'   => 1,
+                'salary_text' => $salaryText,
+                'salary_min'  => $salaryMin,
+                'salary_max'  => $salaryMax,
+                'description' => $description,
+                'posted_at'   => $postedAt,
+            ]);
+        }
+
+        return $listings;
+    }
+
+    private function parseRelativeDate(string $text): ?string
+    {
+        $text = strtolower(trim($text));
+        if (!$text) return null;
+
+        $now = new \DateTime();
+
+        if (str_contains($text, 'just now') || str_contains($text, 'moment')) {
+            return $now->format('Y-m-d H:i:s');
+        }
+        if (preg_match('/(\d+)\s*minute/', $text, $m)) {
+            $now->modify("-{$m[1]} minutes");
+            return $now->format('Y-m-d H:i:s');
+        }
+        if (preg_match('/(\d+)\s*hour/', $text, $m)) {
+            $now->modify("-{$m[1]} hours");
+            return $now->format('Y-m-d H:i:s');
+        }
+        if (str_contains($text, 'yesterday')) {
+            $now->modify('-1 day');
+            return $now->format('Y-m-d H:i:s');
+        }
+        if (preg_match('/(\d+)\s*day/', $text, $m)) {
+            $now->modify("-{$m[1]} days");
+            return $now->format('Y-m-d H:i:s');
+        }
+        if (preg_match('/(\d+)\s*week/', $text, $m)) {
+            $now->modify("-{$m[1]} weeks");
+            return $now->format('Y-m-d H:i:s');
+        }
+
+        return null;
+    }
+}
